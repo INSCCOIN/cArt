@@ -27,7 +27,9 @@ static const char *dname[NDEMO] = {
     "flag", "dottun", "bars", "kaleid", "hop", "noise"
 };
 
-static int mode, pause_on, want_quit;
+static int mode, pause_on, want_quit, pkind;
+static const char *pname[] = {"hue", "fire", "ice", "mono", "acid", "sunset", "gb", "vga"};
+#define NPAL 8
 static double t0, tsec;
 static unsigned tick;
 static struct termios oldt;
@@ -63,22 +65,56 @@ static double now_s(void)
 static void pal_set(int kind)
 {
     int i;
+    pkind = ((kind % NPAL) + NPAL) % NPAL;
     for (i = 0; i < 256; i++) {
-        int r, g, b;
+        int r, g, b, t = i;
         double a = i * 6.2832 / 256.0;
-        if (kind == 1) {
-            r = i;
-            g = i / 2;
-            b = i / 8;
-        } else if (kind == 2) {
-            r = 20;
-            g = 40 + i / 2;
-            b = 80 + i / 2;
-        } else {
+        switch (pkind) {
+        case 1: /* fire */
+            r = t;
+            g = t / 2;
+            b = t / 8;
+            break;
+        case 2: /* ice */
+            r = 16;
+            g = 40 + t / 2;
+            b = 90 + t / 2;
+            break;
+        case 3: /* mono */
+            r = g = b = t;
+            break;
+        case 4: /* acid */
+            r = (int)(128 + 127 * sin(a * 2));
+            g = t;
+            b = 255 - t;
+            break;
+        case 5: /* sunset */
+            r = 80 + t / 2;
+            g = 20 + t / 4;
+            b = t < 128 ? t / 3 : 180 - t / 3;
+            break;
+        case 6: /* gameboy */
+            r = 15 + (t * 50) / 255;
+            g = 56 + (t * 140) / 255;
+            b = 15 + (t * 40) / 255;
+            break;
+        case 7: /* vga stripes */
+            r = (t & 32) ? 220 : 40;
+            g = (t & 64) ? 200 : 20;
+            b = (t & 16) ? 255 : 80;
+            break;
+        default: /* hue */
             r = (int)(128 + 127 * sin(a));
             g = (int)(128 + 127 * sin(a + 2.1));
             b = (int)(128 + 127 * sin(a + 4.2));
+            break;
         }
+        if (r < 0)
+            r = 0;
+        if (g < 0)
+            g = 0;
+        if (b < 0)
+            b = 0;
         pal[i] = rgb565(r, g, b);
     }
 }
@@ -144,8 +180,8 @@ static void init_tables(void)
 static void hud(void)
 {
     char s[96];
-    snprintf(s, sizeof s, "cArt [%d/%d] %s   n/p  space  x",
-             mode + 1, NDEMO, dname[mode]);
+    snprintf(s, sizeof s, "cArt [%d/%d] %s  pal:%s  c color  n/p  x",
+             mode + 1, NDEMO, dname[mode], pname[pkind]);
     fill(0, 0, (int)FB_W, 10, 0);
     text(2, 2, s, rgb565(220, 230, 180));
 }
@@ -1044,10 +1080,11 @@ static void handle(unsigned char *b, int n)
         want_quit = 1;
     else if (b[0] == ' ')
         pause_on = !pause_on;
-    else if (b[0] == 'n' || b[0] == 'N' || b[0] == 13) {
+    else if (b[0] == 'c' || b[0] == 'C')
+        pal_set(pkind + 1);
+    else if (b[0] == 'n' || b[0] == 'N' || b[0] == 13)
         mode = (mode + 1) % NDEMO;
-        pal_set(mode % 3);
-    } else if (b[0] == 'p' || b[0] == 'P')
+    else if (b[0] == 'p' || b[0] == 'P')
         mode = (mode + NDEMO - 1) % NDEMO;
     else if (b[0] == '+' || b[0] == '=') {
         if (mode == D_LSYS && lsys_gen < 6)
