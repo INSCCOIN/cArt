@@ -30,8 +30,10 @@ static const char *dname[NDEMO] = {
 static int mode, pause_on, want_quit, pkind;
 static const char *pname[] = {"hue", "fire", "ice", "mono", "acid", "sunset", "gb", "vga"};
 #define NPAL 8
-static double t0, tsec;
-static unsigned tick;
+#define TOP 10
+static double t0, tsec, speed = 1.0, last_t, fps, fps_t;
+static unsigned flips;
+static unsigned tick, flips;
 static struct termios oldt;
 static int rawon;
 
@@ -179,10 +181,10 @@ static void init_tables(void)
 
 static void hud(void)
 {
-    char s[96];
-    snprintf(s, sizeof s, "cArt [%d/%d] %s  pal:%s  c color  n/p  x",
-             mode + 1, NDEMO, dname[mode], pname[pkind]);
-    fill(0, 0, (int)FB_W, 10, 0);
+    char s[120];
+    fill(0, 0, (int)FB_W, TOP, 0);
+    snprintf(s, sizeof s, "%d/%d %s %s %.0ffps x%.1f  n/p c [] space x",
+             mode + 1, NDEMO, dname[mode], pname[pkind], fps, speed);
     text(2, 2, s, rgb565(220, 230, 180));
 }
 
@@ -194,7 +196,7 @@ static void d_plasma(void)
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
     int t = (int)(tsec * 40);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         int sy = sint[(y + t) & 255] + sint[(y * 2 + t / 2) & 255];
         for (x = 0; x < w; x++) {
@@ -212,7 +214,7 @@ static void d_tunnel(void)
     int t = (int)(tsec * 80);
     if (!tun_a)
         return;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         uint16_t *a = tun_a + y * w;
         uint16_t *d = tun_d + y * w;
@@ -232,7 +234,7 @@ static void d_roto(void)
     double a = tsec * 0.7;
     double ca = cos(a), sa = sin(a);
     double z = 1.2 + 0.4 * sin(tsec * 0.4);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         double yy = (y - h / 2.0) * z;
         for (x = 0; x < w; x++) {
@@ -257,7 +259,7 @@ static void d_fire(void)
             v -= 2;
             fire[y - 1][x] = (uint8_t)(v < 0 ? 0 : v);
         }
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         int fy = y * 80 / h;
         if (fy > 79)
@@ -281,7 +283,7 @@ static void d_meta(void)
         bx[i] = w / 2.0f + cosf((float)(tsec * (0.7 + i * 0.2) + i)) * (w * 0.28f);
         by[i] = h / 2.0f + sinf((float)(tsec * (0.9 + i * 0.15) + i * 2)) * (h * 0.28f);
     }
-    for (y = 1; y < h; y += 1) {
+    for (y = TOP; y < h; y += 1) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             float s = 0;
@@ -299,7 +301,7 @@ static void d_star(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 400; i++) {
         int sx, sy;
         star_z[i] -= 3.2f;
@@ -321,7 +323,7 @@ static void d_twirl(void)
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
     double a = tsec * 0.5;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         double dy = y - h / 2.0;
         for (x = 0; x < w; x++) {
@@ -355,7 +357,7 @@ static void d_julia(void)
     int x, y, w = (int)FB_W, h = (int)FB_H;
     double cr = -0.8 + 0.28 * sin(tsec * 0.23);
     double ci = 0.156 + 0.22 * cos(tsec * 0.19);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         double zi0 = (y / (double)h) * 2.4 - 1.2;
         for (x = 0; x < w; x++) {
@@ -404,7 +406,7 @@ static void d_lorenz(void)
         lor[lor_i][2] = (float)nz;
         lor_i = (lor_i + 1) % 800;
     }
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 800; i++) {
         int sx = (int)(w / 2 + lor[i][0] * 7.5);
         int sy = (int)(h / 2 + 20 - lor[i][2] * 4.0);
@@ -422,7 +424,7 @@ static void lsys_draw(const char *s, double ang)
     double stk[32][3];
     int sp = 0, i;
     double step = 6.0 / (lsys_gen);
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; s[i]; i++) {
         if (s[i] == 'F') {
             double nx = x + cos(a) * step * 14;
@@ -496,7 +498,7 @@ static void d_ifs(void)
     int i, w = (int)FB_W, h = (int)FB_H;
     double x = 0, y = 0;
     if ((tick & 7) == 0)
-        memset(pix, 0, (size_t)st * h * 2);
+        memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 1200; i++) {
         int r = rand() % 100;
         double nx, ny;
@@ -538,11 +540,11 @@ static void d_wave(void)
     }
     for (i = 1; i < 159; i++)
         wave[i] += wave_v[i];
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (x = 0; x < w; x++) {
         int wi = x * 159 / (w - 1);
         int mid = h / 2 + (int)wave[wi];
-        for (y = 1; y < h; y++) {
+        for (y = TOP; y < h; y++) {
             int d = y - mid;
             if (d < 0)
                 d = -d;
@@ -561,7 +563,7 @@ static void d_scroll(void)
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
     int off = (int)(tsec * 40) % ((int)strlen(msg) * 6);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         int bar = (sint[(y + (int)(tsec * 30)) & 255] + 128) >> 1;
         uint16_t c = pal[bar];
         uint16_t *row = pix + y * st;
@@ -623,7 +625,7 @@ static void d_life(void)
         life_p = q;
         p = q;
     }
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         int gy = y * 80 / h;
         if (gy > 79)
@@ -642,7 +644,7 @@ static void d_xor(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H, t = (int)(tsec * 20);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++)
             row[x] = pal[((x + t) ^ (y + t / 2)) & 255];
@@ -658,7 +660,7 @@ static void d_moire(void)
     float ay = h / 2.0f + sinf((float)tsec * 1.3f) * 30;
     float bx = w / 2.0f - cosf((float)tsec * 0.8f) * 50;
     float by = h / 2.0f + cosf((float)tsec) * 25;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             float d1 = hypotf(x - ax, y - ay);
@@ -674,7 +676,7 @@ static void d_rings(void)
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
     float cx0 = w / 2.0f, cy0 = h / 2.0f;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             float d = hypotf(x - cx0, y - cy0);
@@ -689,7 +691,7 @@ static void d_rose(void)
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
     double k = 3 + 2 * sin(tsec * 0.15);
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 1200; i++) {
         double th = i * 0.02 + tsec;
         double r = 90 * sin(k * th);
@@ -705,7 +707,7 @@ static void d_lissa(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 600; i++) {
         double u = i * 0.03 + tsec;
         int sx = (int)(w / 2 + 160 * sin(u * 3));
@@ -729,7 +731,7 @@ static void d_sierp(void)
     ax[2] = w - 12;
     ay[2] = h - 8;
     if ((tick & 15) == 0)
-        memset(pix, 0, (size_t)st * h * 2);
+        memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 800; i++) {
         int r = rand() % 3;
         sx = (sx + ax[r]) * 0.5f;
@@ -753,7 +755,8 @@ static void d_rule30(void)
             nxt[x] = (uint8_t)((30 >> v) & 1);
         }
         memcpy(rule30, nxt, (size_t)n);
-        memmove(pix + st, pix, (size_t)st * (h - 2) * 2);
+        memmove(pix + (unsigned)(TOP + 1) * st, pix + (unsigned)TOP * st,
+                (size_t)st * (h - TOP - 2) * 2);
         for (x = 0; x < w; x++)
             pix[(h - 1) * st + x] = rule30[x % n] ? pal[200] : 0;
     }
@@ -781,7 +784,7 @@ static void d_ant(void)
         if (ant_y > 78)
             ant_y = 1;
     }
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         int gy = y * 80 / h;
         if (gy > 79)
@@ -800,7 +803,7 @@ static void d_rain(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 80; i++) {
         int y, x = (int)drop_x[i];
         drop_y[i] += 6 + (i & 3);
@@ -821,7 +824,7 @@ static void d_snow(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 120; i++) {
         int x, y;
         snow_y[i] += 0.6f + (i % 3) * 0.2f;
@@ -843,7 +846,7 @@ static void d_static(void)
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
     unsigned s = 1103515245u * (tick + 1u);
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             s = s * 1664525u + 1013904223u;
@@ -862,7 +865,7 @@ static void d_voronoi(void)
         px0[i] = w / 2.0f + cosf((float)(tsec * (0.4 + i * 0.07) + i)) * (w * 0.35f);
         py0[i] = h / 2.0f + sinf((float)(tsec * (0.5 + i * 0.05) + i * 2)) * (h * 0.35f);
     }
-    for (y = 1; y < h; y += 2) {
+    for (y = TOP; y < h; y += 2) {
         uint16_t *row = pix + y * st;
         uint16_t *row2 = y + 1 < h ? pix + (y + 1) * st : row;
         for (x = 0; x < w; x += 2) {
@@ -902,7 +905,7 @@ static void d_flow(void)
         on = 1;
     }
     if ((tick & 3) == 0)
-        memset(pix, 0, (size_t)st * h * 2);
+        memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 200; i++) {
         float a = (float)sin(fx[i] * 0.03 + tsec) + (float)cos(fy[i] * 0.02);
         fx[i] += cosf(a) * 2.2f;
@@ -920,7 +923,7 @@ static void d_bounce(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 12; i++) {
         int x, y, dx, dy;
         vx[i] += vdx[i];
@@ -945,7 +948,7 @@ static void d_flag(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             int yy = y + sint[(x + (int)(tsec * 40)) & 255] / 10;
@@ -960,7 +963,7 @@ static void d_dottun(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int i, w = (int)FB_W, h = (int)FB_H;
-    memset(pix, 0, (size_t)st * h * 2);
+    memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 24; i++) {
         float z = fmodf((float)(tsec * 40 + i * 18), 400.0f) + 8;
         int r = (int)(1800.0f / z);
@@ -982,7 +985,7 @@ static void d_bars(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int y, x, w = (int)FB_W, h = (int)FB_H;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         int v = sint[(y * 3 + (int)(tsec * 50)) & 255] + 128;
         uint16_t c = pal[v];
         uint16_t *row = pix + y * st;
@@ -996,7 +999,7 @@ static void d_kaleid(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         int ay = y < h / 2 ? y : h - 1 - y;
         for (x = 0; x < w; x++) {
@@ -1014,7 +1017,7 @@ static void d_hop(void)
     int i, w = (int)FB_W, h = (int)FB_H;
     double a = 0.4 + 0.2 * sin(tsec * 0.05), b = -0.1;
     if ((tick & 31) == 0)
-        memset(pix, 0, (size_t)st * h * 2);
+        memset(pix + (unsigned)TOP * st, 0, (size_t)st * (h - TOP) * 2);
     for (i = 0; i < 600; i++) {
         double nx = hopx * hopx - hopy * hopy + a;
         double ny = 2 * hopx * hopy + b;
@@ -1034,7 +1037,7 @@ static void d_noise(void)
     uint16_t *pix = fb_pixels();
     unsigned st = fb_stride();
     int x, y, w = (int)FB_W, h = (int)FB_H;
-    for (y = 1; y < h; y++) {
+    for (y = TOP; y < h; y++) {
         uint16_t *row = pix + y * st;
         for (x = 0; x < w; x++) {
             int n = sint[(x / 4 + (int)(tsec * 8)) & 255]
@@ -1080,7 +1083,15 @@ static void handle(unsigned char *b, int n)
         want_quit = 1;
     else if (b[0] == ' ')
         pause_on = !pause_on;
-    else if (b[0] == 'c' || b[0] == 'C')
+    else if (b[0] == '[') {
+        speed *= 0.7;
+        if (speed < 0.05)
+            speed = 0.05;
+    } else if (b[0] == ']') {
+        speed *= 1.4;
+        if (speed > 8)
+            speed = 8;
+    } else if (b[0] == 'c' || b[0] == 'C')
         pal_set(pkind + 1);
     else if (b[0] == 'n' || b[0] == 'N' || b[0] == 13)
         mode = (mode + 1) % NDEMO;
@@ -1109,16 +1120,29 @@ int main(void)
     }
     io_open();
     init_tables();
-    t0 = now_s();
+    t0 = last_t = fps_t = now_s();
     while (!want_quit) {
         unsigned char b[8];
         int n;
-        if (!pause_on) {
-            tsec = now_s() - t0;
-            tick++;
-            fn[mode]();
-            hud();
-            fb_flip_fast();
+        {
+            double now = now_s(), dt = now - last_t;
+            last_t = now;
+            if (dt < 0 || dt > 0.2)
+                dt = 0.016;
+            if (!pause_on) {
+                tsec += dt * speed;
+                tick++;
+                fn[mode]();
+                fill(0, 0, (int)FB_W, TOP, 0);
+                hud();
+                fb_flip_fast();
+                flips++;
+                if (now - fps_t >= 0.4) {
+                    fps = flips / (now - fps_t);
+                    flips = 0;
+                    fps_t = now;
+                }
+            }
         }
         n = (int)read(0, b, sizeof b);
         if (n > 0)
